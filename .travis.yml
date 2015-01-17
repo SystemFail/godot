@@ -1,3 +1,19 @@
+env:
+global:
+# The next declaration is the encrypted COVERITY_SCAN_TOKEN, created
+#   via the "travis encrypt" command using the project repo's public key
+- secure: "sM45Joe7s9TvOAqi+5fcAvWuRQ8eOq1/HDZMFh7jpefVQ4HQYeEjLcryA2+/HmbMfyKpQNewOoTzGCD4kDUozaMMFWhHr8rRtstDVR4xaPJc7MDnydai67megd4ARyX7WeE7k8Ya5ebLqd4YhT9u7S3Tnwxu80mVvpDygfg7rKY="
+
+addons:
+coverity_scan:
+project:
+name: "SystemFail/godot"
+description: "godot"
+notification_email: q750d5@gmail.com
+build_command_prepend: ""
+build_command: "scons platform=x11 -j4"
+branch_pattern: coverity
+
 language: cpp
 compiler: 
   - gcc
@@ -10,5 +26,5 @@ before_script:
   - sudo apt-get install -qq scons pkg-config libx11-dev libxcursor-dev build-essential libasound2-dev libfreetype6-dev libgl1-mesa-dev libglu-dev  
   - if [ "$CXX" = "g++" ]; then sudo apt-get install -qq g++-4.8; fi
   - if [ "$CXX" = "g++" ]; then export CXX="g++-4.8" CC="gcc-4.8"; fi
-  
-script: scons platform=x11
+
+script: scons platform=x11 -j4
