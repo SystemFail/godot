@@ -4035,7 +4035,8 @@ EditorNode::EditorNode() {
 	add_editor_plugin( memnew( ScriptEditorPlugin(this) ) );
 	add_editor_plugin( memnew( EditorHelpPlugin(this) ) );
 	add_editor_plugin( memnew( AnimationPlayerEditorPlugin(this) ) );
-	add_editor_plugin( memnew( ShaderGraphEditorPlugin(this) ) );
+	add_editor_plugin( memnew( ShaderGraphEditorPlugin(this,true) ) );
+	add_editor_plugin( memnew( ShaderGraphEditorPlugin(this,false) ) );
 	add_editor_plugin( memnew( ShaderEditorPlugin(this,true) ) );
 	add_editor_plugin( memnew( ShaderEditorPlugin(this,false) ) );
 	add_editor_plugin( memnew( CameraEditorPlugin(this) ) );
@@ -4088,9 +4089,9 @@ EditorNode::EditorNode() {
 
 	Globals::get_singleton()->set("debug/indicators_enabled",true);
 	Globals::get_singleton()->set("render/room_cull_enabled",false);
-	theme->set_color("prop_category","Editor",Color::hex(0x3f3945ff));
-	theme->set_color("prop_section","Editor",Color::hex(0x38323dff));
-	theme->set_color("prop_subsection","Editor",Color::hex(0x342e39ff));
+	theme->set_color("prop_category","Editor",Color::hex(0x403d41ff));
+	theme->set_color("prop_section","Editor",Color::hex(0x383539ff));
+	theme->set_color("prop_subsection","Editor",Color::hex(0x343135ff));
 	theme->set_color("fg_selected","Editor",Color::html("ffbd8e8e"));
 	theme->set_color("fg_error","Editor",Color::html("ffbd8e8e"));
 
