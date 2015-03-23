@@ -54,6 +54,8 @@
 #include "io/marshalls.h"
 
 #include "shlobj.h"
+#include <regstr.h>
+
 static const WORD MAX_CONSOLE_LINES = 1500;
 
 extern "C" {
@@ -169,6 +171,8 @@ void OS_Windows::initialize_core() {
 	last_button_state=0;
 
 	//RedirectIOToConsole();
+	maximized=false;
+	minimized=false;
 
 	ThreadWindows::make_default();	
 	SemaphoreWindows::make_default();	
@@ -593,10 +597,11 @@ LRESULT OS_Windows::WndProc(HWND hWnd,UINT uMsg, WPARAM	wParam,	LPARAM	lParam) {
 
 			ERR_BREAK(key_event_pos >= KEY_EVENT_BUFFER_SIZE);
 
+			// Make sure we don't include modifiers for the modifier key itself.
 			KeyEvent ke;
-			ke.mod_state.shift=shift_mem;
-			ke.mod_state.alt=alt_mem;
-			ke.mod_state.control=control_mem;
+			ke.mod_state.shift= (wParam != VK_SHIFT) ? shift_mem : false;
+			ke.mod_state.alt= (! (wParam == VK_MENU && (uMsg == WM_KEYDOWN || uMsg == WM_SYSKEYDOWN))) ? alt_mem : false;
+			ke.mod_state.control= (wParam != VK_CONTROL) ? control_mem : false;
 			ke.mod_state.meta=meta_mem;
 			ke.uMsg=uMsg;
 
@@ -684,6 +689,53 @@ LRESULT CALLBACK WndProc(HWND	hWnd,UINT uMsg,	WPARAM	wParam,	LPARAM	lParam)	{
 
 }
 
+
+String OS_Windows::get_joystick_name(int id, JOYCAPS jcaps)
+{
+	char buffer [256];
+	char OEM [256];
+	HKEY hKey;
+	DWORD sz;
+	int res;
+
+	_snprintf(buffer, sizeof(buffer), "%s\\%s\\%s",
+				REGSTR_PATH_JOYCONFIG, jcaps.szRegKey,
+				REGSTR_KEY_JOYCURR );
+	res = RegOpenKeyEx(HKEY_LOCAL_MACHINE, buffer, 0, KEY_QUERY_VALUE, &hKey);
+	if (res != ERROR_SUCCESS)
+	{
+		res = RegOpenKeyEx(HKEY_CURRENT_USER, buffer, 0, KEY_QUERY_VALUE, &hKey);
+		if (res != ERROR_SUCCESS) 
+			return "";
+	}
+
+	sz = sizeof(OEM);
+	_snprintf( buffer, sizeof(buffer), "Joystick%d%s", id + 1, REGSTR_VAL_JOYOEMNAME);
+	res = RegQueryValueEx ( hKey, buffer, 0, 0, (LPBYTE) OEM, &sz);
+	RegCloseKey ( hKey );
+	if (res != ERROR_SUCCESS) 
+		return "";
+
+	_snprintf( buffer, sizeof(buffer), "%s\\%s", REGSTR_PATH_JOYOEM, OEM);
+	res = RegOpenKeyEx(HKEY_LOCAL_MACHINE, buffer, 0, KEY_QUERY_VALUE, &hKey);
+	if (res != ERROR_SUCCESS)
+	{
+		res = RegOpenKeyEx(HKEY_CURRENT_USER, buffer, 0, KEY_QUERY_VALUE, &hKey);
+		if (res != ERROR_SUCCESS)
+			return "";
+	}
+		
+
+	sz = sizeof(buffer);
+	res = RegQueryValueEx(hKey, REGSTR_VAL_JOYOEMNAME, 0, 0, (LPBYTE) buffer,
+						  &sz);
+	RegCloseKey(hKey);
+	if (res != ERROR_SUCCESS) 
+		return "";
+
+	return String(buffer);
+}
+
 void OS_Windows::probe_joysticks() {
 
 	static uint32_t last_attached = 0;
@@ -725,7 +777,13 @@ void OS_Windows::probe_joysticks() {
 			JOYCAPS jcaps;
 			MMRESULT res = joyGetDevCaps(JOYSTICKID1 + i, &jcaps, sizeof(jcaps));
 			if (res == JOYERR_NOERROR) {
-				joy.name = jcaps.szPname;
+				String name = get_joystick_name(JOYSTICKID1 + i, jcaps);
+				if ( name == "")
+					joy.name = jcaps.szPname;
+				else
+					joy.name = name;
+				
+					
 			};
 		};
 
@@ -951,6 +1009,23 @@ void OS_Windows::process_joysticks() {
 	};
 };
 
+
+BOOL CALLBACK OS_Windows::MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor,  LPARAM dwData) {
+	OS_Windows *self=(OS_Windows*)OS::get_singleton();
+	MonitorInfo minfo;
+	minfo.hMonitor=hMonitor;
+	minfo.hdcMonitor=hdcMonitor;
+	minfo.rect.pos.x=lprcMonitor->left;
+	minfo.rect.pos.y=lprcMonitor->top;
+	minfo.rect.size.x=lprcMonitor->right - lprcMonitor->left;
+	minfo.rect.size.y=lprcMonitor->bottom - lprcMonitor->top;
+
+	self->monitor_info.push_back(minfo);
+
+	return TRUE;
+}
+
+
 void OS_Windows::initialize(const VideoMode& p_desired,int p_video_driver,int p_audio_driver) {
 
 
@@ -989,6 +1064,9 @@ void OS_Windows::initialize(const VideoMode& p_desired,int p_video_driver,int p_
 	}
 	
 	
+	EnumDisplayMonitors(NULL,NULL,MonitorEnumProc,0);
+
+	print_line("DETECTED MONITORS: "+itos(monitor_info.size()));
 	if (video_mode.fullscreen) {
 
 		DEVMODE current;
@@ -1381,9 +1459,13 @@ void OS_Windows::warp_mouse_pos(const Point2& p_to) {
 		old_y=p_to.y;
 	} else {
 
-		SetCursorPos(p_to.x, p_to.y);
-	}
+		POINT p;
+		p.x=p_to.x;
+		p.y=p_to.y;
+		ClientToScreen(hWnd,&p);
 
+		SetCursorPos(p.x,p.y);
+	}
 }
 
 Point2 OS_Windows::get_mouse_pos() const {
@@ -1414,6 +1496,172 @@ void OS_Windows::get_fullscreen_mode_list(List<VideoMode> *p_list,int p_screen) 
 
 	
 }
+
+int OS_Windows::get_screen_count() const {
+
+	return monitor_info.size();
+}
+int OS_Windows::get_current_screen() const{
+
+	HMONITOR monitor = MonitorFromWindow(hWnd,MONITOR_DEFAULTTONEAREST);
+	for(int i=0;i<monitor_info.size();i++) {
+		if (monitor_info[i].hMonitor==monitor)
+			return i;
+	}
+
+	return 0;
+}
+void OS_Windows::set_current_screen(int p_screen){
+
+	ERR_FAIL_INDEX(p_screen,monitor_info.size());
+
+	Vector2 ofs = get_window_position() - get_screen_position(get_current_screen());
+	set_window_position(ofs+get_screen_position(p_screen));
+
+}
+
+Point2 OS_Windows::get_screen_position(int p_screen) const{
+
+	ERR_FAIL_INDEX_V(p_screen,monitor_info.size(),Point2());
+	return Vector2( monitor_info[p_screen].rect.pos );
+
+}
+Size2 OS_Windows::get_screen_size(int p_screen) const{
+
+	ERR_FAIL_INDEX_V(p_screen,monitor_info.size(),Point2());
+	return Vector2( monitor_info[p_screen].rect.size );
+
+}
+Point2 OS_Windows::get_window_position() const{
+
+	RECT r;
+	GetWindowRect(hWnd,&r);
+	return Point2(r.left,r.top);
+}
+void OS_Windows::set_window_position(const Point2& p_position){
+
+	RECT r;
+	GetWindowRect(hWnd,&r);
+	MoveWindow(hWnd,p_position.x,p_position.y,r.right-r.left,r.bottom-r.top,TRUE);
+
+}
+Size2 OS_Windows::get_window_size() const{
+
+	RECT r;
+	GetWindowRect(hWnd,&r);
+	return Vector2(r.right-r.left,r.bottom-r.top);
+
+}
+void OS_Windows::set_window_size(const Size2 p_size){
+
+	RECT r;
+	GetWindowRect(hWnd,&r);
+	MoveWindow(hWnd,r.left,r.top,p_size.x,p_size.y,TRUE);
+
+}
+void OS_Windows::set_window_fullscreen(bool p_enabled){
+
+	if (video_mode.fullscreen==p_enabled)
+		return;
+
+	if (p_enabled) {
+
+		GetWindowRect(hWnd,&pre_fs_rect);
+
+		int cs = get_current_screen();
+		Point2 pos = get_screen_position(cs);
+		Size2 size = get_screen_size(cs);
+		RECT WindowRect;
+		WindowRect.left = pos.x;
+		WindowRect.top = pos.y;
+		WindowRect.bottom = pos.y+size.y;
+		WindowRect.right = pos.x+size.x;
+
+		DWORD dwExStyle=WS_EX_APPWINDOW;
+		DWORD dwStyle=WS_POPUP;
+
+		AdjustWindowRectEx(&WindowRect, dwStyle, FALSE, dwExStyle);
+
+		video_mode.fullscreen=true;
+		video_mode.width=size.x;
+		video_mode.height=size.y;
+
+
+	} else {
+
+		DWORD dwExStyle=WS_EX_APPWINDOW | WS_EX_WINDOWEDGE;
+		DWORD dwStyle=WS_OVERLAPPEDWINDOW;
+		if (!video_mode.resizable) {
+			dwStyle &= ~WS_THICKFRAME;
+			dwStyle &= ~WS_MAXIMIZEBOX;
+		}
+		AdjustWindowRectEx(&pre_fs_rect, dwStyle, FALSE, dwExStyle);
+		video_mode.fullscreen=false;
+		video_mode.width=pre_fs_rect.right-pre_fs_rect.left;
+		video_mode.height=pre_fs_rect.bottom-pre_fs_rect.top;
+
+	}
+
+
+}
+bool OS_Windows::is_window_fullscreen() const{
+
+	return video_mode.fullscreen;
+}
+void OS_Windows::set_window_resizable(bool p_enabled){
+
+	if (video_mode.fullscreen || video_mode.resizable==p_enabled)
+		return;
+
+	GetWindowRect(hWnd,&pre_fs_rect);
+	DWORD dwExStyle=WS_EX_APPWINDOW | WS_EX_WINDOWEDGE;
+	DWORD dwStyle=WS_OVERLAPPEDWINDOW;
+	if (!p_enabled) {
+		dwStyle &= ~WS_THICKFRAME;
+		dwStyle &= ~WS_MAXIMIZEBOX;
+	}
+	AdjustWindowRectEx(&pre_fs_rect, dwStyle, FALSE, dwExStyle);
+	video_mode.resizable=p_enabled;
+
+}
+bool OS_Windows::is_window_resizable() const{
+
+	return video_mode.resizable;
+}
+void OS_Windows::set_window_minimized(bool p_enabled){
+
+	if (p_enabled) {
+		maximized=false;
+		minimized=true;
+		ShowWindow(hWnd,SW_MINIMIZE);
+	} else {
+		ShowWindow(hWnd,SW_RESTORE);
+		maximized=false;
+		minimized=false;
+	}
+}
+bool OS_Windows::is_window_minimized() const{
+
+	return minimized;
+
+}
+void OS_Windows::set_window_maximized(bool p_enabled){
+
+	if (p_enabled) {
+		maximized=true;
+		minimized=false;
+		ShowWindow(hWnd,SW_MAXIMIZE);
+	} else {
+		ShowWindow(hWnd,SW_RESTORE);
+		maximized=false;
+		minimized=false;
+	}
+}
+bool OS_Windows::is_window_maximized() const{
+
+	return maximized;
+}
+
 
 void OS_Windows::print_error(const char* p_function,const char* p_file,int p_line,const char *p_code,const char*p_rationale,ErrorType p_type) {
 
@@ -1802,6 +2050,7 @@ String OS_Windows::get_stdin_string(bool p_block) {
 void OS_Windows::move_window_to_foreground() {
 
 	SetForegroundWindow(hWnd);
+	BringWindowToTop(hWnd);
 
 }
 
